@@ -17,6 +17,10 @@ class transformer_config:
         }
 
         self.config = {
-            'device':'cpu'
+            'device':'cpu',
+            'test_size':0.2,
+            'batch_size':128,
+            'target_col_name':'',
+            'exogenous_vars':[]
         }
     
