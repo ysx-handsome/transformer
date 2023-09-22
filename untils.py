@@ -33,3 +33,16 @@ def get_indices_input_target(num_obs, input_len, step_size, forecast_horizon, ta
     input_len = round(input_len)
     start_position = 0
     stop_position = num_obs-1
+
+    subseq_first_index = start_position
+    subseq_last_index = start_position+input_len
+    target_first_index = subseq_first_index+forecast_horizon
+    target_last_index = target_first_index+target_len
+    indices = []
+    while target_last_index<=stop_position:
+        indices.append((subseq_first_index,subseq_last_index,target_first_index,target_last_index))
+        subseq_first_index+=step_size
+        subseq_last_index+=step_size
+        target_first_index=subseq_first_index+forecast_horizon
+        target_last_index=target_first_index+target_len
+    return indices
