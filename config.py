@@ -17,6 +17,7 @@ class transformer_config:
         }
 
         self.config = {
+            'path':'',
             'device':'cpu',
             'test_size':0.2,
             'batch_size':128,
