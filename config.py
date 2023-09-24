@@ -5,6 +5,7 @@ class transformer_config:
             'input_size':1,
             'dec_seq_len':4,
             'dim_val':512,
+            'target_sequnce_length':,
             'n_encoder_layers':4,
             'n_decoder_layers':4,
             'n_heads':4,

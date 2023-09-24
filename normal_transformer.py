@@ -109,6 +109,6 @@ class Time_Transformer(nn.Module):
             memory_mask = src_mask
         )
 
-        decoder_output - self.linear_mapping(decoder_output)
+        decoder_output = self.linear_mapping(decoder_output)
 
         return decoder_output
