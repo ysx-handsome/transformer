@@ -16,10 +16,12 @@ from icecream import ic
 import logging
 from joblib import load
 
-
+# 第一句设置了日志的样式和什么级别的信息需要被记录。比如，只记录"INFO"级别及以上的信息。
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(name)s %(message)s",
                     datefmt="[%Y-%m-%d %H:%M:%S]")
+# 第二句创建了一个日志记录器，这样你就可以在程序的其他地方用这个记录器来保存日志信息
 logger = logging.getLogger(__name__)
+
 # class PositionalEncoder(nn.module):
 #     def __init__(self,dropout:float = 0.1,max_seq_len: int = 5000, d_model:int = 512,batch_first:bool = False):
 #         super().__init__()
@@ -54,35 +56,34 @@ logger = logging.getLogger(__name__)
     
 
 class Time_Transformer(nn.Module):
-    def __init__(self,input_size: int, dec_seq_len: int, batch_first: bool = False, out_seq_len : int =58,
-                 dim_val: int =512, n_encoder_layers: int=4, n_decoder_layers: int =4, n_heads: int =0,
+    def __init__(self,input_size: int, n_heads: int =0, batch_first: bool = False, #out_seq_len : int =58,#dec_seq_len: int,
+                 dim_val: int =512, n_encoder_layers: int=4, n_decoder_layers: int =4, 
                  dropout_encoder: float=0.2, dropout_decoder: float =0.2,dropout_pos_enc: float = 0.1,
-                 dim_feedforward_encoder: int= 2048, dim_feedforward_decoder: int =2048, num_predicted_features: int =8): #1
+                 dim_feedforward_encoder: int= 2048, dim_feedforward_decoder: int =2048, num_predicted_features: int =1): 
         super().__init__()
 
-        self.dec_seq_len = dec_seq_len
+        #self.dec_seq_len = dec_seq_len
 
+        #线性层：用于将输入数据映射到高维空间
         self.encoder_input_layer = nn.Linear(
             in_features = input_size,#模型输入的变量数量
             out_features= dim_val
         )
-        
         # self.positional_encoding_layer = PositionalEncoder(
         #     d_model=dim_val,
         #     dropout=dropout_pos_enc
         #     #,max_seq_len=max_seq_len
         #     # max_seq_len用于定义位置编码的最大长度，以便能够处理不超过这个长度的任何输入序列。
         # )
-        
-        #创建一个名为encoder_layer的对象，使用PyTorch的TransformerEncoderLayer类。这个对象会自动包含自注意力机制和前馈网络
+        #创建一个名为encoder_layer的对象，使用PyTorch的TransformerEncoderLayer类，包含自注意力机制和前馈网络
         encoder_layer = nn.TransformerEncoderLayer(
             d_model=dim_val,
             nhead=n_heads,
-            dim_feedforward=dim_feedforward_encoder,
+            dim_feedforward=dim_feedforward_encoder, # 前馈神经网络的隐藏层维度
             dropout=dropout_encoder,
             batch_first=batch_first
         )
-#这个encoder_layer对象被用作参数，传递给torch.nn.TransformerEncoder，以便堆叠四个相同的编码器层
+        #这个encoder_layer对象被用作参数，传递给torch.nn.TransformerEncoder，以便堆叠四个相同的编码器层
         self.encoder = nn.TransformerEncoder(
             encoder_layer= encoder_layer,
             num_layers=n_encoder_layers,
@@ -90,14 +91,14 @@ class Time_Transformer(nn.Module):
         )
         
         self.decoder_input_layer = nn.Linear(
-            in_features = num_predicted_features,
+            in_features = 8,#num_predicted_features, #,
             out_features = dim_val
         )
 
         decoder_layer = nn.TransformerDecoderLayer(
             d_model=dim_val,
             nhead=n_heads,
-            dim_feedforward=dim_feedforward_decoder,
+            dim_feedforward=dim_feedforward_decoder, # 前馈神经网络的隐藏层维度
             dropout=dropout_decoder,
             batch_first=batch_first
         )
@@ -115,16 +116,16 @@ class Time_Transformer(nn.Module):
 
     # 定义模型的前向传播逻辑
     def forward(self,src:Tensor,tgt:Tensor,src_mask:Tensor=None,tgt_mask:Tensor=None) -> Tensor:
-        # src: 编码器的输出序列。
+        # src: 编码器的输入序列。
         # tgt: 解码器的输入序列。
         # src_mask 和 tgt_mask: 这两个是用于遮盖序列的，通常用于处理不同长度的输入。
         
-        src = self.encoder_input_layer(src)# src（源序列）通过编码器的输入层
+        src = self.encoder_input_layer(src)# src（源序列）通过编码器的输入层————把指标拆到高维
         # src = self.positional_encoding_layer(src)# src通过位置编码层
 
-        src = self.encoder(src=src)# src通过所有堆叠的编码器层
+        src = self.encoder(src=src)# src通过所有堆叠的编码器层————捕获"历史销量"和其他7个变量之间的关系
 
-        decoder_output = self.decoder_input_layer(tgt)# tgt（目标序列）通过解码器的输入层
+        decoder_output = self.decoder_input_layer(tgt)# tgt（目标序列）通过解码器的输入层————把指标拆到高维
 
         # 使用编码器的输出src（记忆）和目标序列tgt进行解码
         decoder_output = self.decoder(
@@ -154,45 +155,57 @@ class SensorDataset(Dataset):
         self.df = pd.read_csv(csv_file)#读出来变成dataframe
         self.root_dir = root_dir
         self.transform = MinMaxScaler()#归一化
-        self.T = 30#training_length
-        self.S = 12#forecast_window
+        self.T = training_length
+        self.S = forecast_window
 
     # 统计传感器的数量
     def __len__(self):
         return len(self.df.groupby(by=["reindexed_id"]))#同一个id的传感器聚合起来，统计有多少个传感器
 
-    # idx是传感器的id
+    # 以“油站油品”为粒度的滑动窗口，窗口长度=30，且对"历史销量"做归一化处理
     def __getitem__(self, idx):
-        # Sensors are indexed from 1
 
-
-        # np.random.seed(0)
         start = np.random.randint(0, len(self.df[self.df["reindexed_id"] == idx]) - self.T - self.S)
         sensor_number = str(self.df[self.df["reindexed_id"] == idx][["item_id"]][start:start + 1].values.item())
         # training data  随机生成的训练数据index
         index_in = torch.tensor([i for i in range(start, start + self.T)])
         # forecast data  随机生成的预测数据index
         index_tar = torch.tensor([i for i in range(start + self.T, start + self.T + self.S)])
+        # torch.Size([30, 8])
         _input = torch.tensor(self.df[self.df["reindexed_id"] == idx][
                                   ["历史销量", "当天温度", "当天油价", "sin_day", "cos_day", "sin_month", "cos_month","year"]][
                               start: start + self.T].values)
+        # torch.Size([12, 8])
         target = torch.tensor(self.df[self.df["reindexed_id"] == idx][
                                   ["历史销量", "当天温度", "当天油价", "sin_day", "cos_day", "sin_month", "cos_month","year"]][
                               start + self.T: start + self.T + self.S].values)
 
-        # scalar is fit only to the input, to avoid the scaled values "leaking" information about the target range.
-        # scalar is fit only for humidity, as the timestamps are already scaled
-        # scalar input/output of shape: [n_samples, n_features].
+        # 对 _input 和 target 张量中的第一列（即 "历史销量"）进行归一化处理
         scaler = self.transform
-
         scaler.fit(_input[:, 0].unsqueeze(-1))
         _input[:, 0] = torch.tensor(scaler.transform(_input[:, 0].unsqueeze(-1)).squeeze(-1))
         target[:, 0] = torch.tensor(scaler.transform(target[:, 0].unsqueeze(-1)).squeeze(-1))
 
-        # save the scalar to be used later when inverse translating the data for plotting.
         dump(scaler, 'scalar_item.joblib')
         idx = idx + 1
         return index_in, index_tar, _input, target, sensor_number
+
+# # 生成掩码：函数生成上三角矩阵，其中对角线上方的元素是 -inf（负无穷），对角线上是 0
+# # 这种类型的掩码用于 Transformer 的自注意力机制，以防止模型在预测某个元素时查看该元素之后的信息。
+
+# dim1 和 dim2 是生成掩码的维度
+def generate_square_subsequent_mask(dim1: int, dim2: int) -> Tensor:
+    """
+    Generates an upper-triangular matrix of -inf, with zeros on diag.
+
+    Args:
+        dim1: int, for both src and tgt masking, this must be target sequence length
+        dim2: int, for src masking this must be encoder sequence length (i.e. the length of the input sequence to the model), 
+              and for tgt masking, this must be target sequence length 
+    Return:
+        A Tensor of shape [dim1, dim2]
+    """
+    return torch.triu(torch.ones(dim1, dim2) * float('-inf'), diagonal=1)
 
 
 def flip_from_probability(p):
@@ -245,8 +258,8 @@ def plot_training_3(epoch, path_to_save, src, sampled_src, prediction, sensor_nu
 
     plt.figure(figsize=(15, 6))
     plt.rcParams.update({"font.size": 18})
-    plt.grid(b=True, which='major', linestyle='-')
-    plt.grid(b=True, which='minor', linestyle='--', alpha=0.5)
+    plt.grid(True, which='major', linestyle='-')
+    plt.grid(True, which='minor', linestyle='--', alpha=0.5)
     plt.minorticks_on()
 
     # REMOVE DROPOUT FOR THIS PLOT TO APPEAR AS EXPECTED !!
@@ -266,25 +279,30 @@ def transformer(dataloader, EPOCH, k,  path_to_save_model, path_to_save_loss, pa
 
     device = torch.device(device)
     print("---device---", device)
-    dim_val = 512 # 这是模型中每个向量的维度
-    n_heads = 8 # 注意力机制的头数，也就是并行注意力层的数量
-    n_decoder_layers = 4 # 解码器中堆叠的层的数量
-    n_encoder_layers = 4 # 编码器中堆叠的层的数量
-    input_size = 1#8 # 输入变量的数量。如果是单变量预测，这个值是1。
-    dec_seq_len = 54 # 提供给解码器的输入长度######
-    enc_seq_len = 153 # 提供给编码器的输入长度
-    output_sequence_length = 12 # 目标序列的长度，也就是你想要预测的时间步数
-    max_seq_len = enc_seq_len # 模型将遇到的最长序列长度。这用于创建位置编码器。
+
+    #tgt_mask：这是一个目标序列（通常是解码器的输入）的掩码。它的形状是 [output_sequence_length, output_sequence_length]。
+    # 这用于确保解码器在生成第 i 个输出元素时，只能查看到第 i 个及其之前的元素。
+    tgt_mask = generate_square_subsequent_mask(
+        dim1=12,
+        dim2=12
+    )
+    #src_mask：这是一个源序列（通常是编码器的输入）的掩码。它的形状是 [output_sequence_length, enc_seq_len]。
+    # 这用于可能的源和目标序列长度不匹配的情况
+    src_mask = generate_square_subsequent_mask(
+        dim1=12,
+        dim2=30
+        )   
+    src_mask = src_mask.double()
+    tgt_mask = tgt_mask.double()
 
     model = Time_Transformer(
-        dim_val=dim_val,
-        input_size=input_size, 
-        dec_seq_len=dec_seq_len,
+        input_size=8, 
+        #dec_seq_len=dec_seq_len,
         # max_seq_len=max_seq_len,
-        out_seq_len=output_sequence_length, 
-        n_decoder_layers=n_decoder_layers,
-        n_encoder_layers=n_encoder_layers,
-        n_heads=n_heads)
+        # out_seq_len=output_sequence_length, 
+        # n_decoder_layers=n_decoder_layers,
+        # n_encoder_layers=n_encoder_layers,
+        n_heads=8)
     model = model.double()
 
     optimizer = torch.optim.Adam(model.parameters())
@@ -296,49 +314,23 @@ def transformer(dataloader, EPOCH, k,  path_to_save_model, path_to_save_loss, pa
         train_loss = 0
         val_loss = 0
 
-        ## TRAIN -- TEACHER FORCING
         model.train()
         for index_in, index_tar, _input, target, sensor_number in dataloader:
 
-            # Shape of _input : [batch, input_length, feature]
-            # Desired input for model: [input_length, batch, feature]
+            # Shape of _input : [batch, input_length, feature]  torch.Size([1, 30, 8])
+            # Desired input for model: [input_length, batch, feature]  torch.Size([30, 1, 8])
 
             optimizer.zero_grad()#对每个batch的数据做训练之间，会做一次梯度清零
-            src = _input.permute(1, 0, 2).double().to(device)[:-1, :, :]    # torch.Size([24, 1, 7])#[有多少条记录, 每条记录的维度, 7]
-            target = _input.permute(1, 0, 2).double().to(device)[1:, :, :]  # src shifted by 1.
-            # choose which value: real or prediction
-            sampled_src = src[:1, :, :]  # t0 torch.Size([1, 1, 7])
 
-            for i in range(len(target) - 1):
-
-                prediction = model(sampled_src,target)  # torch.Size([1xw, 1, 1])
-                """
-                # to update model at every step
-                # loss = criterion(prediction, target[:i+1,:,:1])
-                # loss.backward()
-                # optimizer.step()
-                """
-
-                # 采样策略
-                if i < 24:
-                    prob_true_val = True #用真实的input
-                else:
-                    v = k / (k + math.exp(epoch / k)) #计算选择真实值的概率
-                    prob_true_val = flip_from_probability(v)
-
-
-                if prob_true_val:
-                    sampled_src = torch.cat((sampled_src.detach(), src[i + 1, :, :].unsqueeze(0).detach()))#在序列上加上真实值
-                else:
-                    positional_encodings_new_val = src[i + 1, :, 1:].unsqueeze(0)#位置编码
-                    predicted_humidity = torch.cat((prediction[-1, :, :].unsqueeze(0), positional_encodings_new_val),
-                                                   dim=2)#特征（湿度）拼上位置编码
-                    # sampled_src shape: torch.Size([1, 1, 7])
-                    sampled_src = torch.cat((sampled_src.detach(), predicted_humidity.detach()))
-
-            """To update model after each sequence"""
-            # prediction shape: torch.Size([46, 1, 1])
-            loss = criterion(target[:-1, :, 0].unsqueeze(-1), prediction)
+            # # choose which value: real or prediction
+              # t0 torch.Size([1, 1, 8])
+            src = _input.permute(1, 0, 2).double().to(device) # torch.Size([29, 1, 8])——[有多少条记录, 每条记录的维度, 7]
+            tgt = target.permute(1, 0, 2).double().to(device)  # src shifted by 1.
+            # sampled_src = src[:1, :, :]
+            prediction = model(src,tgt) 
+            #prediction = model(src,tgt, src_mask, tgt_mask)
+            
+            loss = criterion(target.permute(1, 0, 2)[:, :, 0].unsqueeze(-1), prediction)
             loss.backward()
             optimizer.step()
             train_loss += loss.detach().item()
@@ -350,18 +342,18 @@ def transformer(dataloader, EPOCH, k,  path_to_save_model, path_to_save_loss, pa
                 best_model = f"best_train_{epoch}.pth"
             min_train_loss = train_loss
 
-        if epoch % 1 == 0:  # Plot 1-Step Predictions
+        # if epoch % 1 == 0:  # Plot 1-Step Predictions
 
-            logger.info(f"Epoch: {epoch}, Training loss: {train_loss}")
-            scaler = load('scalar_item.joblib')
-            # 采样的情况图
-            sampled_src_humidity = scaler.inverse_transform(sampled_src[:, :, 0].cpu())  # torch.Size([47, 1, 7])
-            src_humidity = scaler.inverse_transform(src[:, :, 0].cpu())  # torch.Size([47, 1, 7])
-            target_humidity = scaler.inverse_transform(target[:, :, 0].cpu())  # torch.Size([47, 1, 7])
-            prediction_humidity = scaler.inverse_transform(
-                prediction[:, :, 0].detach().cpu().numpy())  # torch.Size([47, 1, 7])
-            plot_training_3(epoch, path_to_save_predictions, src_humidity, sampled_src_humidity, prediction_humidity,
-                            sensor_number, index_in, index_tar)
+        #     logger.info(f"Epoch: {epoch}, Training loss: {train_loss}")
+        #     scaler = load('scalar_item.joblib')
+        #     # 采样的情况图
+        #     sampled_src_humidity = scaler.inverse_transform(sampled_src[:, :, 0].cpu())  # torch.Size([47, 1, 7])
+        #     src_humidity = scaler.inverse_transform(src[:, :, 0].cpu())  # torch.Size([47, 1, 7])
+        #     target_humidity = scaler.inverse_transform(target[:, :, 0].cpu())  # torch.Size([47, 1, 7])
+        #     prediction_humidity = scaler.inverse_transform(
+        #         prediction[:, :, 0].detach().cpu().numpy())  # torch.Size([47, 1, 7])
+        #     plot_training_3(epoch, path_to_save_predictions, src_humidity, sampled_src_humidity, prediction_humidity,
+        #                     sensor_number, index_in, index_tar)
 
         train_loss /= len(dataloader)
         log_loss(train_loss, path_to_save_loss, train=True)
@@ -400,62 +392,29 @@ def get_src_trg(
     return src, trg, trg_y.squeeze(-1)
 
 train_dataset = SensorDataset(csv_name="train.csv", root_dir="/Users/hanqiyu/Desktop/transformer/要发论文", 
-                              training_length=54,forecast_window=12)
+                              training_length=30,forecast_window=12)
+# train.csv里每个油站油品有54条数据
 train_dataloader = DataLoader(train_dataset, batch_size=1, shuffle=True)
+#batch_size=1 指的是每个批次（batch）从 train_dataset 中抽取的数据样本数为1。在深度学习中，批次是用于在每个优化步骤中更新网络权重的数据子集。
+
+
 test_dataset = SensorDataset(csv_name="test.csv", root_dir="/Users/hanqiyu/Desktop/transformer/要发论文", 
-                             training_length=54,forecast_window=12)
+                             training_length=30,forecast_window=12)
+# test.csv里每个油站油品有66条数据，but这块是不是对test来讲不应该随机抽了，就应该要最后那42条？
 test_dataloader = DataLoader(test_dataset, batch_size=1, shuffle=True)
+
 
 best_model = transformer(train_dataloader, 5, 60,  "/Users/hanqiyu/Desktop/transformer/要发论文/模型保存", "/Users/hanqiyu/Desktop/transformer/要发论文/模型保存/loss",
                             "/Users/hanqiyu/Desktop/transformer/要发论文/模型保存/prediction")
 # inference(path_to_save_predictions, forecast_window, test_dataloader, device, path_to_save_model, best_model)
 
     
-##后面的暂时没用上
-
-# output = model(
-#     src=src, 
-#     tgt=trg
-#     )
 
 
-# # 生成掩码：函数生成上三角矩阵，其中对角线上方的元素是 -inf（负无穷），对角线上是 0
-# # 这种类型的掩码用于 Transformer 的自注意力机制，以防止模型在预测某个元素时查看该元素之后的信息。
 
-# # dim1 和 dim2 是生成掩码的维度
-# def generate_square_subsequent_mask(dim1: int, dim2: int) -> Tensor:
-#     """
-#     Generates an upper-triangular matrix of -inf, with zeros on diag.
-#     Source:
-#     https://pytorch.org/tutorials/beginner/transformer_tutorial.html
-#     Args:
-#         dim1: int, for both src and tgt masking, this must be target sequence
-#               length
-#         dim2: int, for src masking this must be encoder sequence length (i.e. 
-#               the length of the input sequence to the model), 
-#               and for tgt masking, this must be target sequence length 
-#     Return:
-#         A Tensor of shape [dim1, dim2]
-#     """
-#     return torch.triu(torch.ones(dim1, dim2) * float('-inf'), diagonal=1)
-#
-# # Input length
-# enc_seq_len = 100
 
-# # Output length
-# output_sequence_length = 58
 
-# #tgt_mask：这是一个目标序列（通常是解码器的输入）的掩码。它的形状是 [output_sequence_length, output_sequence_length]。
-# # 这用于确保解码器在生成第 i 个输出元素时，只能查看到第 i 个及其之前的元素。
-# tgt_mask = generate_square_subsequent_mask(
-#     dim1=output_sequence_length,
-#     dim2=output_sequence_length
-#    )
-# #src_mask：这是一个源序列（通常是编码器的输入）的掩码。它的形状是 [output_sequence_length, enc_seq_len]。
-# # 这用于可能的源和目标序列长度不匹配的情况
-# src_mask = generate_square_subsequent_mask(
-#     dim1=output_sequence_length,
-#     dim2=enc_seq_len
-#     )    
+
+ 
 
 
