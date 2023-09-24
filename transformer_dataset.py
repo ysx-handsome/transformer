@@ -45,6 +45,7 @@ class TransformerDataset(Dataset):
         self,
         sequence: torch.Tensor, 
         enc_seq_len: int, 
+        dec_seq_len: int,
         target_seq_len: int
         ) -> list[torch.tensor, torch.tensor, torch.tensor]:
     
